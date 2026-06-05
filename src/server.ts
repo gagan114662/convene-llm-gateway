@@ -37,6 +37,23 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://x");
     const path = url.pathname;
+    if (req.method === "GET" && (path === "/" || path === "/index.html")) {
+      return send(res, 200, {
+        service: "convene-llm-gateway",
+        description: "Route each task to the cheapest model that clears its capability bar (across the OpenCode provider).",
+        configured: gateway.configured(),
+        models: gateway.registry.count(),
+        repo: "https://github.com/gagan114662/convene-llm-gateway",
+        endpoints: {
+          "GET /healthz": "liveness + whether the provider key is configured",
+          "GET /models": "live, classified model catalogue",
+          "POST /route": "{ taskType, forceModel? } → which model would be chosen + rationale (dry-run)",
+          "POST /complete": "{ taskType, prompt, maxTokens?, forceModel?, budgetCents? } → route + call + fallback",
+          "GET /telemetry": "recent per-call records (model/rationale/tokens/latency/cost) + summary",
+        },
+        taskTypes: TASK_TYPES,
+      });
+    }
     if (req.method === "GET" && path === "/healthz") {
       return send(res, 200, { ok: true, configured: gateway.configured(), models: gateway.registry.count() });
     }
