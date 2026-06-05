@@ -29,23 +29,29 @@ export const CAPABILITY_BAR: Record<TaskType, number> = {
   code: 0.8,
 };
 
-const STRONG = /(opus|gpt-?4|sonnet|gemini-?1\.5-pro|gemini-?2.*pro|large|70b|72b|deepseek-(v3|r1)|qwen2?.*72|llama-?3\.[13]-70|mistral-large|command-r-plus|grok-2)/i;
-const SMALL = /(mini|nano|small|haiku|flash|lite|8b|7b|3b|1\.5b|phi|gemma|ministral|command-r7)/i;
-const CODER = /(cod(e|er|ing)|deepseek-?cod|qwen.*cod|starcoder|codestral)/i;
+// Tiers are inferred from id signals — adaptive, not a hardcoded id list. Small =
+// fast/cheap variants; strong = flagship suffixes/families; reasoners/coders are
+// tagged explicitly. Everything else is a capable mid tier (clears the code bar).
+const SMALL = /(flash|mini|nano|lite|haiku|small|air|8b|7b|3b|1\.5b|phi|gemma|ministral)/i;
+const STRONG = /(max|pro|plus|ultra|opus|gpt-?4|sonnet|gemini.*pro|large|70b|72b|deepseek-(v\d|r1)|kimi|glm-[5-9]|grok|command-r-plus)/i;
+const CODER = /(cod(e|er|ing)|codestral|starcoder)/i;
 const REASONER = /(o1|o3|o4|r1|reason|think|qwq)/i;
 
 // classifyModel: derive capability/cost/task-fit from a model id (+ optional
 // provider-supplied pricing). Heuristic, so it adapts to ids we've never seen.
+// Task-fit is CAPABILITY-DRIVEN: any model over the code/reasoning bar is a
+// candidate for that work (cheapest wins), small models serve trivial tasks.
 export function classifyModel(id: string, provider: string, pricing?: { inPer1k?: number; outPer1k?: number; context?: number }): ModelInfo {
-  const strong = STRONG.test(id);
-  const small = SMALL.test(id) && !strong;
-  const capability = strong ? 0.95 : small ? 0.55 : 0.8;
+  const reasoner = REASONER.test(id);
+  const small = SMALL.test(id);
+  const strong = !small && (reasoner || STRONG.test(id));
+  const capability = strong || reasoner ? 0.95 : small ? 0.6 : 0.82; // mid default clears the code bar
   const inCostPer1k = pricing?.inPer1k ?? (strong ? 0.005 : small ? 0.0003 : 0.0015);
   const outCostPer1k = pricing?.outPer1k ?? (strong ? 0.015 : small ? 0.0006 : 0.006);
   const tasks: TaskType[] = ["chat", "summarization"];
-  if (small) tasks.push("classification");
-  if (CODER.test(id) || strong) tasks.push("code");
-  if (REASONER.test(id) || strong) tasks.push("reasoning");
+  if (capability >= CAPABILITY_BAR.reasoning || reasoner) tasks.push("reasoning");
+  if (capability >= CAPABILITY_BAR.code || CODER.test(id)) tasks.push("code");
+  if (capability <= 0.65) tasks.push("classification");
   return { id, provider, tasks, capability, inCostPer1k, outCostPer1k, context: pricing?.context ?? 128_000 };
 }
 

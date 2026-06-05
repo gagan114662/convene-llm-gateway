@@ -21,10 +21,11 @@ describe("classifyModel + route (#147)", () => {
     ];
     // classification → the cheap small model wins (clears the low bar, cheapest)
     expect(pick(models, "classification")!.id).toBe("nano-mini");
-    // code → small model excluded (below the bar); a strong one is chosen
+    // code → small model excluded (below the bar); the cheapest capable wins
     const coder = pick(models, "code")!;
     expect(coder.capability).toBeGreaterThanOrEqual(CAPABILITY_BAR.code);
-    expect(coder.id).toBe("gpt-4o");
+    expect(coder.id).not.toBe("nano-mini");
+    expect(coder.id).toBe("mid-model"); // cheapest clearing the code bar (cheaper than gpt-4o)
   });
 
   it("an override forces a specific model", () => {
