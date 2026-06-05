@@ -1,0 +1,20 @@
+{
+  "name": "convene-llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Convene's LLM gateway: route each task to the cheapest capable model across providers (OpenCode), with a refreshable registry, circuit-breaker fallback, budget preflight, and per-call telemetry.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --import tsx src/server.ts",
+    "dev": "node --import tsx src/server.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8",
+    "@types/node": "^22.10.1"
+  }
+}
