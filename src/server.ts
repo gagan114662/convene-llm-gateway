@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { LlmGateway } from "./gateway.js";
 import { OpenCodeProvider } from "./provider.js";
 import { TASK_TYPES, type TaskType } from "./models.js";
+import { AutoRouter } from "./routing/autoRouter.js";
 
 // Convene LLM gateway HTTP service. Endpoints:
 //   GET  /healthz             liveness + whether the provider key is configured
@@ -9,10 +10,15 @@ import { TASK_TYPES, type TaskType } from "./models.js";
 //   POST /route   {taskType}  which model WOULD be chosen + rationale (dry-run)
 //   POST /complete {taskType, prompt, maxTokens?, forceModel?, budgetCents?}
 //   GET  /telemetry           recent per-call records + cost summary
+//   POST /auto/complete       AUTO-SELECT a model (flag-gated by AUTO_ROUTING_ENABLED)
+//   GET  /routing/stats       aggregate auto-routing decisions + recent rationale
 // Optional shared-secret auth: if GATEWAY_TOKEN is set, requests must send
 //   Authorization: Bearer <GATEWAY_TOKEN>. The OpenCode key is never exposed.
 
 const gateway = new LlmGateway(new OpenCodeProvider());
+// Auto-routing layers ON TOP of the gateway. Default OFF (AUTO_ROUTING_ENABLED):
+// when off, /auto/complete returns 404 and the explicit-model API is unchanged.
+const autoRouter = new AutoRouter(gateway);
 const PORT = Number(process.env.PORT ?? 8095);
 const TOKEN = process.env.GATEWAY_TOKEN;
 
@@ -43,6 +49,7 @@ const server = createServer(async (req, res) => {
         description: "Route each task to the cheapest model that clears its capability bar (across the OpenCode provider).",
         configured: gateway.configured(),
         models: gateway.registry.count(),
+        autoRouting: autoRouter.enabled(),
         repo: "https://github.com/gagan114662/convene-llm-gateway",
         endpoints: {
           "GET /healthz": "liveness + whether the provider key is configured",
@@ -50,6 +57,8 @@ const server = createServer(async (req, res) => {
           "POST /route": "{ taskType, forceModel? } → which model would be chosen + rationale (dry-run)",
           "POST /complete": "{ taskType, prompt, maxTokens?, forceModel?, budgetCents? } → route + call + fallback",
           "GET /telemetry": "recent per-call records (model/rationale/tokens/latency/cost) + summary",
+          "POST /auto/complete": "{ prompt, tenant?, taskTypeHint?, schema?, costCeilingCents?, ... } → Claude-orchestrated auto-selection (flag-gated)",
+          "GET /routing/stats": "aggregate auto-routing decisions (stage, models, escalations, cost accuracy) — flag-gated",
         },
         taskTypes: TASK_TYPES,
       });
@@ -79,6 +88,25 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && path === "/telemetry") {
       return send(res, 200, { summary: gateway.telemetry.summary(), recent: gateway.telemetry.recent(100) });
+    }
+    // ---- auto-routing (flag-gated; default OFF leaves the API above unchanged) ----
+    if (req.method === "POST" && path === "/auto/complete") {
+      if (!autoRouter.enabled()) return send(res, 404, { error: "auto routing disabled", hint: "set AUTO_ROUTING_ENABLED=true" });
+      const b = await readJson(req);
+      if (typeof b.prompt !== "string" || !b.prompt) return send(res, 400, { error: "prompt required" });
+      try {
+        const r = await autoRouter.complete({
+          prompt: b.prompt, tenant: b.tenant, taskTypeHint: b.taskTypeHint, categoryHint: b.categoryHint,
+          expectedOutputTokens: b.expectedOutputTokens, latencySensitive: b.latencySensitive, needsTools: b.needsTools,
+          costCeilingCents: b.costCeilingCents, schema: b.schema, maxTokens: b.maxTokens,
+        });
+        // Return the answer plus the full routing decision (rationale, escalations, cost).
+        return send(res, r.ok ? 200 : 502, { ok: r.ok, text: r.text, decision: r.record });
+      } catch (e) { return send(res, 502, { error: (e as Error).message }); }
+    }
+    if (req.method === "GET" && path === "/routing/stats") {
+      if (!autoRouter.enabled()) return send(res, 404, { error: "auto routing disabled", hint: "set AUTO_ROUTING_ENABLED=true" });
+      return send(res, 200, { stats: autoRouter.stats(), recent: autoRouter.recent(100) });
     }
     return send(res, 404, { error: "not found" });
   } catch (e) {
